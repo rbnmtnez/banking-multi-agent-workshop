@@ -77,19 +77,37 @@ public class ChatService
     }
 
     /// <summary>
+    /// Add user prompt and AI assistance response to the chat session message list object and insert into the data service as a transaction.
+    /// </summary>
+    private async Task AddPromptCompletionMessagesAsync(string tenantId, string userId, string sessionId, Message promptMessage, List<Message> completionMessages, List<DebugLog> completionMessageLogs)
+    {
+        var session = await _cosmosDBService.GetSessionAsync(tenantId, userId, sessionId);
+
+        completionMessages.Insert(0, promptMessage);
+        await _cosmosDBService.UpsertSessionBatchAsync(completionMessages, completionMessageLogs, session);
+    }
+
+    /// <summary>
     /// Receive a prompt from a user, vectorize it from the OpenAI service, and get a completion from the OpenAI service.
     /// </summary>
-    public async Task<List<Message>> GetChatCompletionAsync(string tenantId, string userId,string? sessionId, string userPrompt)
+    public async Task<List<Message>> GetChatCompletionAsync(string tenantId, string userId, string? sessionId, string userPrompt)
     {
         try
         {
             ArgumentNullException.ThrowIfNull(sessionId);
-            await Task.Delay(1);
+
+            // Retrieve conversation, including latest prompt.
+            var archivedMessages = await _cosmosDBService.GetSessionMessagesAsync(tenantId, userId, sessionId);
 
             // Add both prompt and completion to cache, then persist in Cosmos DB
-            var userMessage = new Message(tenantId, userId, sessionId, "User", "User", "## Replay user message ## " + userPrompt);
+            var userMessage = new Message(tenantId,userId,sessionId, "User","User", userPrompt);
 
-            return new List<Message> { userMessage };
+            // Generate the completion to return to the user
+            var result = await _skService.GetResponse(userMessage, archivedMessages,_bankService,tenantId,userId);
+
+            await AddPromptCompletionMessagesAsync(tenantId, userId,sessionId, userMessage, result.Item1, result.Item2);
+
+            return result.Item1;
         }
         catch (Exception ex)
         {
@@ -107,9 +125,9 @@ public class ChatService
         {
             ArgumentNullException.ThrowIfNull(sessionId);
 
-            var summary = "not implemented";
+            var summary = await _skService.Summarize(sessionId, prompt);
 
-            var session = await RenameChatSessionAsync(tenantId, userId, sessionId, summary);
+            var session = await RenameChatSessionAsync(tenantId, userId,sessionId, summary);
 
             return session.Name;
         }

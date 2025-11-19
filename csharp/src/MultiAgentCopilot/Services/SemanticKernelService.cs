@@ -47,7 +47,25 @@ public class SemanticKernelService :  IDisposable
 
         var builder = Kernel.CreateBuilder();
 
-        //TO DO: Update SemanticKernelService constructor
+        builder.Services.AddSingleton<ILoggerFactory>(loggerFactory);
+
+        DefaultAzureCredential credential;
+        if (string.IsNullOrEmpty(_skSettings.AzureOpenAISettings.UserAssignedIdentityClientID))
+        {
+            credential = new DefaultAzureCredential();
+        }
+        else
+        {
+            credential = new DefaultAzureCredential(new DefaultAzureCredentialOptions
+            {
+                ManagedIdentityClientId = _skSettings.AzureOpenAISettings.UserAssignedIdentityClientID
+            });
+        }
+
+        builder.AddAzureOpenAIChatCompletion(
+           _skSettings.AzureOpenAISettings.CompletionsDeployment,
+           _skSettings.AzureOpenAISettings.Endpoint,
+           credential);
 
         _semanticKernel = builder.Build();
 
@@ -55,9 +73,75 @@ public class SemanticKernelService :  IDisposable
         Task.Run(Initialize).ConfigureAwait(false);
     }
 
-    //TO DO: Add GetResponse function
+    public async Task<Tuple<List<Message>, List<DebugLog>>> GetResponse(Message userMessage, List<Message> messageHistory, BankingDataService bankService, string tenantId, string userId)
+    {
+        try
+        {
+            AgentFactory agentFactory = new AgentFactory();
 
-    //TO DO: Add Summarize function
+            var agent = agentFactory.BuildAgent(_semanticKernel, _loggerFactory, bankService, tenantId, userId);
+
+            ChatHistory chatHistory = new();
+
+            // Load history
+            foreach (var chatMessage in messageHistory)
+            {
+                if (chatMessage.SenderRole == "User")
+                {
+                    chatHistory.AddUserMessage(chatMessage.Text);
+                }
+                else
+                {
+                    chatHistory.AddAssistantMessage(chatMessage.Text);
+                }
+            }
+
+            // Create an AgentThread using the ChatHistory object
+            AgentThread agentThread = new ChatHistoryAgentThread(chatHistory);
+
+            _promptDebugProperties = new List<LogProperty>();
+
+            List<Message> completionMessages = new();
+            List<DebugLog> completionMessagesLogs = new();
+                      
+
+            await foreach (ChatMessageContent response in agent.InvokeAsync(userMessage.Text, agentThread))
+            {
+                string messageId = Guid.NewGuid().ToString();
+                completionMessages.Add(new Message(userMessage.TenantId, userMessage.UserId, userMessage.SessionId, response.AuthorName ?? string.Empty, response.Role.ToString(), response.Content ?? string.Empty, messageId));
+            }
+            return new Tuple<List<Message>, List<DebugLog>>(completionMessages, completionMessagesLogs);
+
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error when getting response: {ErrorMessage}", ex.ToString());
+            return new Tuple<List<Message>, List<DebugLog>>(new List<Message>(), new List<DebugLog>());
+        }
+    }
+
+    public async Task<string> Summarize(string sessionId, string userPrompt)
+    {
+        try
+        {
+            // Use an AI function to summarize the text in 2 words
+            var summarizeFunction = _semanticKernel.CreateFunctionFromPrompt(
+                "Summarize the following text into exactly two words:\n\n{{$input}}",
+                executionSettings: new OpenAIPromptExecutionSettings { MaxTokens = 10 }
+            );
+
+            // Invoke the function
+            var summary = await _semanticKernel.InvokeAsync(summarizeFunction, new() { ["input"] = userPrompt });
+
+            return summary.GetValue<string>() ?? "No summary generated";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error when getting response: {ErrorMessage}", ex.ToString());
+            return string.Empty;
+        }
+    }
+
 
 
     private Task Initialize()
