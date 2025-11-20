@@ -79,7 +79,7 @@ public class SemanticKernelService :  IDisposable
         {
             AgentFactory agentFactory = new AgentFactory();
 
-            var agent = agentFactory.BuildAgent(_semanticKernel, _loggerFactory, bankService, tenantId, userId);
+            var agent = agentFactory.BuildAgent(_semanticKernel, AgentType.Sales, _loggerFactory, bankService, tenantId, userId);
 
             ChatHistory chatHistory = new();
 
