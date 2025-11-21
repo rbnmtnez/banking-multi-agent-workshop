@@ -79,39 +79,50 @@ public class SemanticKernelService :  IDisposable
         {
             AgentFactory agentFactory = new AgentFactory();
 
-            var agent = agentFactory.BuildAgent(_semanticKernel, AgentType.Sales, _loggerFactory, bankService, tenantId, userId);
-
-            ChatHistory chatHistory = new();
+            var agentGroupChat = agentFactory.BuildAgentGroupChat(_semanticKernel, _loggerFactory, LogMessage, bankService, tenantId, userId);
 
             // Load history
             foreach (var chatMessage in messageHistory)
             {
-                if (chatMessage.SenderRole == "User")
+                AuthorRole? role = AuthorRoleHelper.FromString(chatMessage.SenderRole);
+                var chatMessageContent = new ChatMessageContent
                 {
-                    chatHistory.AddUserMessage(chatMessage.Text);
-                }
-                else
-                {
-                    chatHistory.AddAssistantMessage(chatMessage.Text);
-                }
+                    Role = role ?? AuthorRole.User,
+                    Content = chatMessage.Text
+                };
+                agentGroupChat.AddChatMessage(chatMessageContent);
             }
-
-            // Create an AgentThread using the ChatHistory object
-            AgentThread agentThread = new ChatHistoryAgentThread(chatHistory);
 
             _promptDebugProperties = new List<LogProperty>();
 
             List<Message> completionMessages = new();
             List<DebugLog> completionMessagesLogs = new();
-                      
-
-            await foreach (ChatMessageContent response in agent.InvokeAsync(userMessage.Text, agentThread))
+            do
             {
-                string messageId = Guid.NewGuid().ToString();
-                completionMessages.Add(new Message(userMessage.TenantId, userMessage.UserId, userMessage.SessionId, response.AuthorName ?? string.Empty, response.Role.ToString(), response.Content ?? string.Empty, messageId));
-            }
-            return new Tuple<List<Message>, List<DebugLog>>(completionMessages, completionMessagesLogs);
+                var userResponse = new ChatMessageContent(AuthorRole.User, userMessage.Text);
+                agentGroupChat.AddChatMessage(userResponse);
 
+                agentGroupChat.IsComplete = false;
+
+                await foreach (ChatMessageContent response in agentGroupChat.InvokeAsync())
+                {
+                    string messageId = Guid.NewGuid().ToString();
+                    string debugLogId = Guid.NewGuid().ToString();
+                    completionMessages.Add(new Message(userMessage.TenantId, userMessage.UserId, userMessage.SessionId, response.AuthorName ?? string.Empty, response.Role.ToString(), response.Content ?? string.Empty, messageId, debugLogId));
+
+                    if (_promptDebugProperties.Count > 0)
+                    {
+                        var completionMessagesLog = new DebugLog(userMessage.TenantId, userMessage.UserId, userMessage.SessionId, messageId, debugLogId);
+                        completionMessagesLog.PropertyBag = _promptDebugProperties;
+                        completionMessagesLogs.Add(completionMessagesLog);
+                    }
+
+                }
+            }
+            while (!agentGroupChat.IsComplete);
+          
+
+            return new Tuple<List<Message>, List<DebugLog>>(completionMessages, completionMessagesLogs);
         }
         catch (Exception ex)
         {
@@ -119,6 +130,12 @@ public class SemanticKernelService :  IDisposable
             return new Tuple<List<Message>, List<DebugLog>>(new List<Message>(), new List<DebugLog>());
         }
     }
+
+    private void LogMessage(string key, string value)
+    {
+        _promptDebugProperties.Add(new LogProperty(key, value));
+    }
+
 
     public async Task<string> Summarize(string sessionId, string userPrompt)
     {
