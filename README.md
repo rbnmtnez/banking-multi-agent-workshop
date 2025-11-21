@@ -57,6 +57,29 @@ Average Monthly Cost:
 
 ## Resources
 
+
+## Application Flow: Frontend, Backend, and Agents
+
+1. **Frontend Request**: The user interacts with the web app and sends a chat message. The frontend makes an HTTP request to the backend, targeting endpoints like:
+	- `POST /tenant/{tenantId}/user/{userId}/sessions/{sessionId}/completion` (send a chat message)
+	- `GET /tenant/{tenantId}/user/{userId}/sessions/{sessionId}/messages` (get chat history)
+	These endpoints are defined in `ChatEndpoints.cs`.
+
+2. **Backend Routing**: The backend receives the request and routes it to the appropriate method in `ChatService` via the mapped endpoint in `ChatEndpoints.cs`. For chat completion, it calls a method that interacts with the multi-agent system.
+
+3. **Agent Workflow**: The backend creates an AgentGroupChat using the AgentFactory. Each agent (Sales, Transactions, etc.) is initialized with its own plugin and prompt. The message history is loaded so agents have context. The user’s new message is added to the chat. The system enters a loop, invoking agents asynchronously:
+	- Each agent processes the message, possibly calling banking APIs, searching for offers, or handling transactions.
+	- Agents generate responses, which are collected as Message objects.
+	- Debug logs are captured for traceability.
+	The loop continues until the conversation is marked complete by the agents.
+
+4. **Backend Response**: The backend returns the list of agent-generated messages and debug logs as JSON to the frontend.
+
+5. **Frontend Display**: The frontend receives the response and updates the chat UI with the new messages.
+
+**Summary:**
+The frontend sends user input to the backend. The backend routes the request, loads the session, and invokes a group of specialized agents. Each agent processes the message according to its domain (sales, transactions, support), and their responses are returned to the frontend for display. This enables rich, multi-agent conversational AI for banking tasks.
+
 To learn more about the services and features demonstrated in this sample, see the following:
 
 - [Azure Cosmos DB for NoSQL Vector Search announcement](https://aka.ms/CosmosDBDiskANNBlog/)
